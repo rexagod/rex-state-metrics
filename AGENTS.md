@@ -11,7 +11,9 @@ Build and maintain **resource-state-metrics**: a Kubernetes controller that watc
 
 - **Human role**: intent, architecture trade-offs, security-sensitive decisions, final review and merge.
 - **Agent role**: implementation drafts, refactors, tests, docs—always reviewed by a human familiar with the area.
-- **Issues**: prefer **Goal + Acceptance criteria**; link files and constraints (see `docs/agentic-sdlc.md`).
+- **Issues**: prefer **Goal + Acceptance criteria**; link files and constraints.
+- **Workflow**: propose a short plan for non-trivial work before implementing. Prefer small, reviewable steps.
+- **Verification**: run `make verify` after edits (or the relevant subset: `make lint`, `make test`).
 
 ## Architecture (high level)
 
@@ -20,9 +22,9 @@ API Server → Informer/Lister → Controller → Configurer → Store → Resol
 ```
 
 - **Entry point**: `main.go`.
-- **`internal/`**: Controller reconcile loop, configuration parsing, metric store, Prometheus writer, cardinality enforcement, HTTP server. See `internal/AGENTS.md`.
-- **`pkg/resolver/`**: Expression resolvers (CEL, Starlark, field-path) behind a shared `Resolver` interface. See `pkg/resolver/AGENTS.md`.
-- **`pkg/apis/`**: CRD type definitions (`ResourceMetricsMonitor` v1alpha1) — the API contract. See `pkg/apis/AGENTS.md`.
+- **`internal/`**: Controller reconcile loop, configuration parsing, metric store, Prometheus writer, cardinality enforcement, HTTP server.
+- **`pkg/resolver/`**: Expression resolvers (CEL, Starlark, field-path) behind a shared `Resolver` interface.
+- **`pkg/apis/`**: CRD type definitions (`ResourceMetricsMonitor` v1alpha1) — the API contract.
 - **`pkg/generated/`**: Auto-generated clientset, informers, listers — **never edit by hand**.
 - **Integrations**: Kubernetes API server (watch/list), Prometheus (metrics exposition).
 
@@ -50,20 +52,15 @@ API Server → Informer/Lister → Controller → Configurer → Store → Resol
 
 - **Style / lint**: `make lint` (Go, YAML, Markdown, Jsonnet, Makefile linters) and `make test` must pass before merge.
 - **Full verification**: `make verify` runs lint + test + generated-code verification.
-- **Commits**: Use [conventional commits](https://www.conventionalcommits.org) (enforced by pre-commit hook). Allowed types: `build chore ci docs feat fix perf refactor revert style test`. Include `Assisted-by:` or `Generated-by:` per `REDHAT.md` when AI assisted.
+- **Commits**: Use [conventional commits](https://www.conventionalcommits.org) (enforced by pre-commit hook). Allowed types: `build chore ci docs feat fix perf refactor revert style test`. Include `Assisted-by:` or `Generated-by:` trailers when AI assisted.
 - **License headers**: All `.go`, `.yaml`, and `.jsonnet` files require Apache 2.0 boilerplate. Run `make lint` to check, `make lint_fix` to auto-fix.
-- **Secrets**: Never commit real credentials; use env vars and a local `.env` (gitignored) with synthetic values in docs.
+- **Secrets**: Never commit real credentials.
 - **Generated code**: After modifying `pkg/apis/`, run `make codegen` and `make manifests`. After modifying `jsonnet/`, run `make jsonnet_manifests`.
 - **Golden tests**: Each resolver has golden test files under `tests/golden/`. Tests compare actual output against `.out.metrics` in these files.
 - **Branch**: Downstream work targets `openshift-main`; upstream work targets `main`.
 
 ## Common tasks (copy-paste prompts)
 
-- "Using `skills/product-manager.md`: turn this BU ask into a MON epic/story with Goal + Acceptance Criteria; search Jira for duplicates first."
-- "Using `skills/engineer.md`: implement MON-XXX from Jira (read AC via MCP), then use `skills/test-writing-qe.md` for tests against the same AC; run `make verify` before updating Jira."
-- "Using `skills/adversarial-qe.md`: red-team this PR against the ticket AC and flag security or edge-case issues."
-- "Using `skills/product-security.md`: review dependencies and container images for this release; summarize CVE and license gaps."
-- "Using `skills/performance-agent.md`: run benchmarks for this change, compare to the repo baseline, and validate our SLOs; recommend CI updates if gaps exist."
 - "Add a new resolver in `pkg/resolver/` following the pattern in `pkg/resolver/cel.go`; implement the `Resolver` interface from `resolver.go`; add golden tests under `tests/golden/`."
 - "Add a new metric family: update the `ResourceMetricsMonitor` CRD in `pkg/apis/`, run `make generate`, then implement handling in `internal/`."
 
@@ -111,7 +108,7 @@ func (r *MyResolver) Resolve(query string, unstructuredObjectMap map[string]inte
 
 ### Missing golden tests
 
-Every resolver change needs golden test coverage under `tests/golden/<resolver>/`, not just unit tests with hardcoded assertions. See `tests/golden/AGENTS.md` for the file format. Read an existing golden file in the relevant resolver directory before writing a new one.
+Every resolver change needs golden test coverage under `tests/golden/<resolver>/`, not just unit tests with hardcoded assertions. Read an existing golden file in the relevant resolver directory before writing a new one. Golden files are YAML with `in`, `metrics`, and `status` sections. Run `make golden_metrics` to regenerate `metrics.txt` (never edit it by hand).
 
 ### Resolver inheritance confusion
 
@@ -176,9 +173,39 @@ families:
 ### Other common mistakes
 
 - **Missing license headers** — All source files need Apache 2.0 boilerplate. Run `make lint` to catch, `make lint_fix` to auto-fix.
-- **Dark work** — Starting or finishing work **without** a Jira ticket (MON project), or skipping **acceptance criteria** / agile hygiene—see **`skills/product-engineering.md`** and Jira-first notes in **`docs/agentic-sdlc.md`**.
-- **Using `Co-Authored-By:` for AI** — Use `Assisted-by:` or `Generated-by:` trailers instead per `REDHAT.md`.
+- **Dark work** — Starting or finishing work **without** a Jira ticket (MON project), or skipping **acceptance criteria** / agile hygiene.
+- **Using `Co-Authored-By:` for AI** — Use `Assisted-by:` or `Generated-by:` trailers instead.
 - **Forgetting `make manifests`** — After changing CRD types in `pkg/apis/`, manifests in `manifests/` must be regenerated.
+
+## Hard boundaries
+
+### `internal/`
+
+- Use `sync.Map` for stores, `sync.Once` for scheme registration, `atomic.Bool` for sync state. Do not use bare maps or non-atomic booleans for shared state.
+- Cardinality enforcement is three-tier (global → per-store → per-family) with warning ratio before hard cutoff. Never bypass — it prevents OOM in production.
+- Never import from `pkg/generated/` directly — use interfaces and types from `pkg/apis/`.
+- Never add a new HTTP endpoint without updating probe configuration.
+- Never modify rate limiter constants without benchmarking under load.
+
+### `pkg/apis/`
+
+- Any change to `types.go` requires human review (L3 escalation) — this is the API contract.
+- Never remove or rename a field without a deprecation plan — existing CRs in clusters depend on these fields.
+- Never change `+kubebuilder` marker comments without understanding their effect on CRD generation.
+- After modifying `types.go`: `make codegen` → `make manifests` → `make test`.
+
+### `pkg/resolver/`
+
+- Never return errors from `Resolve` — log and return an empty map. The caller handles absence.
+- Never edit `resolver.go` to add resolver-specific logic — keep the interface clean.
+- Never add external dependencies without human approval — resolvers run on every watch event and must be fast.
+- Adding a new resolver: create `<name>.go`, add type to `ResolverType` in `pkg/apis/`, register in `internal/config.go`, add golden tests, run `make codegen && make manifests && make test`.
+
+### `tests/golden/`
+
+- Per-resolver subdirectories: `cel/`, `starlark/`, `unstructured/`. Place new tests in the matching subdirectory.
+- Never delete a golden test without confirming the behavior it tested is intentionally removed.
+- Always include `status.conditions` — they validate the controller's status reporting.
 
 ## Testing architecture
 
@@ -205,7 +232,4 @@ Operations in this repo map to escalation levels based on reversibility, blast r
 
 ## Key links
 
-- Principles and tenets: [docs/principles.md](docs/principles.md)
-- Playbook: [docs/agentic-sdlc.md](docs/agentic-sdlc.md)
-- Policy: [REDHAT.md](REDHAT.md)
 - Upstream: [github.com/kubernetes-sigs/resource-state-metrics](https://github.com/kubernetes-sigs/resource-state-metrics)
