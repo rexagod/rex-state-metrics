@@ -11,7 +11,7 @@ Build and maintain **resource-state-metrics**: a Kubernetes controller that watc
 
 - **Human role**: intent, architecture trade-offs, security-sensitive decisions, final review and merge.
 - **Agent role**: implementation drafts, refactors, tests, docs—always reviewed by a human familiar with the area.
-- **Issues**: prefer **Goal + Acceptance criteria**; link files and constraints.
+- **Issues**: prefer **Goal + Acceptance criteria**; link files and constraints. Commits and PRs carry the ticket key (`MON-123`) or `NO-JIRA` prefix.
 - **Workflow**: propose a short plan for non-trivial work before implementing. Prefer small, reviewable steps.
 - **Verification**: run `make verify` after edits (or the relevant subset: `make lint`, `make test`).
 
@@ -58,6 +58,7 @@ API Server → Informer/Lister → Controller → Configurer → Store → Resol
 - **Generated code**: After modifying `pkg/apis/`, run `make codegen` and `make manifests`. After modifying `jsonnet/`, run `make jsonnet_manifests`.
 - **Golden tests**: Each resolver has golden test files under `tests/golden/`. Tests compare actual output against `.out.metrics` in these files.
 - **Branch**: Downstream work targets `openshift-main`; upstream work targets `main`.
+- **Code review**: focus on semantic correctness, hallucinated APIs, over-engineering, and consistency with existing patterns. Agent-assisted review supplements but never replaces human review.
 
 ## Common tasks (copy-paste prompts)
 
